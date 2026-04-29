@@ -1,0 +1,45 @@
+# ManimTool 默认配置
+# 任何字段均可被环境变量或命令行参数覆盖
+
+project:
+  name: "manimtool"
+  output_dir: "./output"
+  cache_dir: "./.cache"
+  log_level: "INFO"
+
+llm:
+  provider: "openai"          # openai | anthropic
+  model: "gpt-4o"
+  temperature: 0.4
+  max_tokens: 4096
+  timeout_seconds: 60
+  retries: 2
+
+tts:
+  provider: "edge"
+  voice: "zh-CN-XiaoxiaoNeural"
+  rate: "+0%"
+  volume: "+0%"
+  pitch: "+0Hz"
+
+render:
+  engine: "mermaid"           # 当前仅支持 mermaid，未来可扩展 manim/d2/plantuml
+  mermaid:
+    cli: "mmdc"
+    theme: "default"
+    background: "transparent"
+    width: 1920
+    height: 1080
+    scale: 2
+
+video:
+  resolution: [1920, 1080]
+  fps: 30
+  codec: "libx264"
+  audio_codec: "aac"
+  background_color: "#0E1117"
+  font: "Noto Sans CJK SC"
+  font_size: 42
+  subtitle_enabled: true
+  transition: "fade"          # none | fade | slide
+  transition_duration: 0.5
