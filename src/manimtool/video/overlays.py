@@ -8,13 +8,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from manimtool.logging import logger
 
-_FONT_CACHE: dict[tuple[str, int], ImageFont.FreeTypeFont] = {}
+_FONT_CACHE: dict[tuple[str, int], Any] = {}
 
 _FONT_CANDIDATES = [
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
@@ -26,7 +27,7 @@ _FONT_CANDIDATES = [
 ]
 
 
-def _load_font(font: str, size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+def _load_font(font: str, size: int) -> Any:
     key = (font, size)
     if key in _FONT_CACHE:
         return _FONT_CACHE[key]
@@ -45,9 +46,13 @@ def _load_font(font: str, size: int) -> ImageFont.FreeTypeFont | ImageFont.Image
     return ImageFont.load_default()
 
 
-def _measure(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont) -> tuple[int, int]:
+def _measure(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font: Any,
+) -> tuple[int, int]:
     bbox = draw.textbbox((0, 0), text, font=font)
-    return bbox[2] - bbox[0], bbox[3] - bbox[1]
+    return int(bbox[2] - bbox[0]), int(bbox[3] - bbox[1])
 
 
 @dataclass(frozen=True)
@@ -139,7 +144,7 @@ def render_progress_bar(
 
     label_y = pad
     for i, (chap, (x0, x1)) in enumerate(zip(chapters, seg_xs, strict=True)):
-        text = f"{i + 1}. {chap.title}"
+        text = chap.title
         if i == current_index:
             text_color = _hex_to_rgba(style.chapter_label_color, 255)
             box_color = _hex_to_rgba(style.progress_bar_color, 230)
@@ -162,6 +167,27 @@ def render_progress_bar(
         draw.text((cx - tw / 2, by0 + 6), text, fill=text_color, font=label_font)
 
     return img
+
+
+def render_progress_bar_layout(
+    style: OverlayStyle,
+    chapters: list[ChapterMeta],
+    current_index: int,
+) -> tuple[Image.Image, tuple[int, int, int, int]]:
+    """渲染"标签 + 已完成章节进度条"的静态层（不画当前章节填充）。
+
+    返回 ``(image, (bar_x0, bar_y, bar_x1, bar_h))``，调用方可基于该坐标
+    在视频合成时动态绘制当前章节的填充矩形（避免逐帧 overlay PNG）。
+    """
+    img = render_progress_bar(style, chapters, current_index, progress_in_chapter=0.0)
+    pad = style.progress_bar_padding
+    width = style.width
+    label_h = max(style.subtitle_font_size + 18, 48)
+    bar_y = pad + label_h + 12
+    bar_x0 = pad
+    bar_x1 = width - pad
+    bar_h = style.progress_bar_height
+    return img, (bar_x0, bar_y, bar_x1, bar_h)
 
 
 def render_subtitle(style: OverlayStyle, text: str) -> Image.Image | None:
@@ -226,7 +252,7 @@ def composite_image_on_canvas(
     iw, ih = img.size
     scale = min(avail_w / iw, avail_h / ih, 1.0)
     nw, nh = max(1, int(iw * scale)), max(1, int(ih * scale))
-    img = img.resize((nw, nh), Image.LANCZOS)
+    img = img.resize((nw, nh), Image.Resampling.LANCZOS)
     x = (w - nw) // 2
     y = padding_top + (avail_h - nh) // 2
     canvas.paste(img, (x, y), img)
@@ -237,21 +263,25 @@ def to_numpy(img: Image.Image) -> np.ndarray:
     return np.array(img)
 
 
-def _hex_to_rgb(s: str) -> tuple[int, int, int]:
+def hex_to_rgb(s: str) -> tuple[int, int, int]:
     s = s.lstrip("#")
     if len(s) == 3:
         s = "".join(c * 2 for c in s)
     return tuple(int(s[i : i + 2], 16) for i in (0, 2, 4))  # type: ignore[return-value]
 
 
+def _hex_to_rgb(s: str) -> tuple[int, int, int]:
+    return hex_to_rgb(s)
+
+
 def _hex_to_rgba(s: str, alpha: int) -> tuple[int, int, int, int]:
-    r, g, b = _hex_to_rgb(s)
+    r, g, b = hex_to_rgb(s)
     return (r, g, b, alpha)
 
 
 def _wrap_text(
     text: str,
-    font: ImageFont.ImageFont,
+    font: Any,
     draw: ImageDraw.ImageDraw,
     max_w: int,
 ) -> list[str]:
@@ -272,7 +302,7 @@ def _wrap_text(
 
 def _truncate(
     text: str,
-    font: ImageFont.ImageFont,
+    font: Any,
     draw: ImageDraw.ImageDraw,
     max_w: int,
 ) -> str:

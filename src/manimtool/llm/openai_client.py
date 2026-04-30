@@ -60,7 +60,7 @@ class OpenAILLM(BaseLLM):
                 content = resp.choices[0].message.content or "{}"
                 data = json.loads(content)
                 return Storyboard.model_validate(data)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 last_err = e
                 logger.warning(
                     f"OpenAI 调用失败（第 {attempt + 1}/{self.config.retries + 1} 次）：{e}"

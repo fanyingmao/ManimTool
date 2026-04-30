@@ -28,6 +28,12 @@ def test_chunk_narration_handles_long_text() -> None:
     assert all(len(c) <= 30 for c in chunks)
 
 
+def test_chunk_narration_no_orphan_short_lines() -> None:
+    text = "深度学习用层层堆叠的神经网络自动学习特征，再反复迭代。"
+    chunks = _chunk_narration(text, max_chars=24)
+    assert all(len(c) >= 4 for c in chunks)
+
+
 def test_cues_from_word_boundaries_aligns_chunks() -> None:
     chunks = ["你好世界", "再见"]
     boundaries = [

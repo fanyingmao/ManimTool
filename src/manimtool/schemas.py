@@ -157,8 +157,8 @@ class VideoConfig(BaseModel):
     chapter_label_color: str = "#FFFFFF"
     subtitle_box_color: str = "#000000"
     subtitle_box_opacity: float = 0.55
-    image_padding_top: int = 140
-    image_padding_bottom: int = 200
+    image_padding_top: int = 160
+    image_padding_bottom: int = 240
 
 
 class ProjectConfig(BaseModel):

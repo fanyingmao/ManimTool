@@ -42,7 +42,7 @@ def _detect_audio_duration(path: Path) -> float:
 
         info = MP3(str(path)).info
         return float(info.length)
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
 
     try:
@@ -64,47 +64,69 @@ def _detect_audio_duration(path: Path) -> float:
         ]
         out = subprocess.check_output(cmd, text=True)
         return float(json.loads(out)["format"]["duration"])
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         raise TTSError(f"无法检测音频时长: {path} ({e})") from e
 
 
 def _chunk_narration(text: str, max_chars: int = 28) -> list[str]:
-    """把整段旁白切成短句，便于字幕滚动。
-    优先按中文标点切，再按 max_chars 兜底。
+    """把整段旁白切成短句，便于字幕滚动显示。
+
+    策略：
+        1. 先按强标点（句号/问号等）切成"句"
+        2. 句内若仍长，按软标点（中文逗号、顿号）切成"短语"
+        3. 把过短的相邻短语合并到接近 ``max_chars``，避免出现单独 1-2 字的孤行
+        4. 仍然超长的纯文本（无标点）按字符硬切，但容忍 ``max_chars * 1.5``
     """
     if not text.strip():
         return []
-    seps = "。！？!?；;\n"
+    hard_seps = "。！？!?；;\n"
     soft_seps = "，,、 "
-    chunks: list[str] = []
-    buf = ""
-    for ch in text:
-        buf += ch
-        if ch in seps and buf.strip():
-            chunks.append(buf.strip())
-            buf = ""
-    if buf.strip():
-        chunks.append(buf.strip())
+
+    def _split(s: str, seps: str) -> list[str]:
+        parts: list[str] = []
+        buf = ""
+        for ch in s:
+            buf += ch
+            if ch in seps and buf.strip():
+                parts.append(buf.strip())
+                buf = ""
+        if buf.strip():
+            parts.append(buf.strip())
+        return parts
+
+    sentences = _split(text, hard_seps)
 
     final: list[str] = []
-    for c in chunks:
-        if len(c) <= max_chars:
-            final.append(c)
+    for sent in sentences:
+        if len(sent) <= max_chars:
+            final.append(sent)
             continue
-        sub = ""
-        for ch in c:
-            sub += ch
-            should_break = False
-            if len(sub) >= max_chars and ch in soft_seps:
-                should_break = True
-            elif len(sub) >= max_chars:
-                should_break = True
-            if should_break:
-                final.append(sub.strip())
-                sub = ""
-        if sub.strip():
-            final.append(sub.strip())
-    return [c for c in final if c]
+        sub_phrases = _split(sent, soft_seps)
+        merged: list[str] = []
+        cur = ""
+        for p in sub_phrases:
+            if not cur:
+                cur = p
+            elif len(cur) + len(p) <= max_chars:
+                cur = cur + p
+            else:
+                merged.append(cur)
+                cur = p
+        if cur:
+            merged.append(cur)
+        for m in merged:
+            if len(m) <= int(max_chars * 1.5):
+                final.append(m)
+                continue
+            buf = ""
+            for ch in m:
+                buf += ch
+                if len(buf) >= max_chars:
+                    final.append(buf)
+                    buf = ""
+            if buf:
+                final.append(buf)
+    return [c.strip() for c in final if c.strip()]
 
 
 def _cues_from_word_boundaries(
@@ -142,7 +164,7 @@ class EdgeTTS(BaseTTS):
             return asyncio.run(self._async_synthesize(scene, output_dir))
         except TTSError:
             raise
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             raise TTSError(f"edge-tts 合成失败 (scene={scene.id}): {e}") from e
 
     async def _async_synthesize(self, scene: Scene, output_dir: Path) -> TTSResult:

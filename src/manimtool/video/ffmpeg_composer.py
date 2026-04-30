@@ -24,7 +24,8 @@ from manimtool.video.overlays import (
     ChapterMeta,
     OverlayStyle,
     composite_image_on_canvas,
-    render_progress_bar,
+    hex_to_rgb,
+    render_progress_bar_layout,
 )
 
 
@@ -35,8 +36,8 @@ def _resolve_ffmpeg() -> str:
     try:
         from imageio_ffmpeg import get_ffmpeg_exe
 
-        return get_ffmpeg_exe()
-    except Exception as e:  # noqa: BLE001
+        return str(get_ffmpeg_exe())
+    except Exception as e:
         raise VideoComposeError("未找到 ffmpeg，请安装 ffmpeg 或 imageio-ffmpeg") from e
 
 
@@ -169,18 +170,6 @@ class FFmpegComposer(BaseComposer):
         bg_path = work / f"bg_{idx:03d}.png"
         bg_image.save(bg_path)
 
-        bar_paths: list[tuple[float, Path]] = []
-        if style.progress_bar_enabled:
-            n_segments = max(2, int(round(duration * 4)))
-            seg_dur = duration / n_segments
-            for i in range(n_segments):
-                t_mid = (i + 0.5) * seg_dur
-                progress = t_mid / max(duration, 1e-3)
-                bar = render_progress_bar(style, chapters, idx, progress)
-                p = work / f"bar_{idx:03d}_{i:03d}.png"
-                bar.save(p)
-                bar_paths.append((i * seg_dur, p))
-
         srt_path: Path | None = None
         if self.config.subtitle_enabled and art.tts.cues:
             srt_path = work / f"subs_{idx:03d}.srt"
@@ -198,28 +187,49 @@ class FFmpegComposer(BaseComposer):
             "-i",
             str(art.tts.audio_path),
         ]
-        for _, bp in bar_paths:
-            inputs.extend(["-loop", "1", "-i", str(bp)])
+
+        bar_path: Path | None = None
+        bar_box: tuple[int, int, int, int] | None = None
+        if style.progress_bar_enabled:
+            bar_img, bar_box = render_progress_bar_layout(style, chapters, idx)
+            bar_path = work / f"bar_{idx:03d}.png"
+            bar_img.save(bar_path)
+            inputs.extend(["-loop", "1", "-i", str(bar_path)])
 
         filter_parts: list[str] = []
         last_label = "[0:v]"
-        for i, (start, _bp) in enumerate(bar_paths):
-            in_label = f"[{2 + i}:v]"
-            seg_dur = duration / len(bar_paths)
-            end = start + seg_dur
-            out_label = f"[v{i}]"
+
+        if bar_path is not None and bar_box is not None:
+            x0, y0, x1, h = bar_box
+            current_seg_x_in_label = self._segment_x_range(chapters, idx, x0, x1)
+            seg_x0, seg_x1 = current_seg_x_in_label
+            seg_w = seg_x1 - seg_x0
+            color_hex = "{:02x}{:02x}{:02x}".format(*hex_to_rgb(style.progress_bar_color))
             filter_parts.append(
-                f"{last_label}{in_label}overlay=x=(W-w)/2:y=0:"
-                f"enable='between(t,{start:.3f},{end:.3f})'{out_label}"
+                f"{last_label}[2:v]overlay=x=0:y=0[bg1]"
             )
-            last_label = out_label
+            last_label = "[bg1]"
+            fill_w_expr = f"max(0\\,min({seg_w}\\,t/{duration:.6f}*{seg_w}))"
+            filter_parts.append(
+                f"{last_label}drawbox=x={seg_x0}:y={y0}:"
+                f"w='{fill_w_expr}':h={h}:color=0x{color_hex}@1.0:t=fill[bg2]"
+            )
+            last_label = "[bg2]"
 
         if srt_path:
             srt_str = srt_path.as_posix().replace(":", "\\:")
+            # ASS Fontsize 单位是 PlayResY（默认 288）下的像素；目标视频高度 1080
+            # 时，等价像素 ≈ Fontsize * height / 288。
+            target_px = max(28, int(self.config.subtitle_font_size * 0.65))
+            font_size = max(12, int(target_px * 288 / max(height, 1)))
+            target_margin_px = max(50, self.config.image_padding_bottom // 3)
+            margin_v = max(20, int(target_margin_px * 288 / max(height, 1)))
             sub_filter = (
-                f"subtitles='{srt_str}':force_style="
-                "'Fontsize=20,Alignment=2,PrimaryColour=&HFFFFFF&,OutlineColour=&H80000000&,"
-                "BorderStyle=3,Outline=2,Shadow=0,MarginV=60'"
+                f"subtitles='{srt_str}':"
+                f"original_size={width}x{height}:"
+                f"force_style='Fontsize={font_size},Alignment=2,"
+                "PrimaryColour=&H00FFFFFF&,OutlineColour=&HC8000000&,BackColour=&HC8000000&,"
+                f"BorderStyle=3,Outline=4,Shadow=0,MarginV={margin_v},Spacing=1'"
             )
             filter_parts.append(f"{last_label}{sub_filter}[vout]")
             last_label = "[vout]"
@@ -242,6 +252,8 @@ class FFmpegComposer(BaseComposer):
                 str(fps),
                 "-c:a",
                 self.config.audio_codec,
+                "-preset",
+                "veryfast",
                 "-shortest",
                 "-t",
                 f"{duration:.3f}",
@@ -251,6 +263,22 @@ class FFmpegComposer(BaseComposer):
         logger.debug(f"ffmpeg scene[{idx}]: {' '.join(cmd)}")
         self._run(cmd)
         return out_seg
+
+    @staticmethod
+    def _segment_x_range(
+        chapters: list[ChapterMeta], current_index: int, x0: int, x1: int
+    ) -> tuple[int, int]:
+        durations = [max(c.duration, 0.001) for c in chapters]
+        total = sum(durations)
+        cum = 0.0
+        for i, d in enumerate(durations):
+            frac = d / total
+            seg_x0 = x0 + cum * (x1 - x0)
+            seg_x1 = x0 + (cum + frac) * (x1 - x0)
+            if i == current_index:
+                return int(round(seg_x0)), int(round(seg_x1))
+            cum += frac
+        return x0, x1
 
     def _run(self, cmd: list[str]) -> None:
         try:

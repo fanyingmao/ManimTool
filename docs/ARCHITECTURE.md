@@ -2,33 +2,37 @@
 
 ## 1. 总览
 
-ManimTool 把"主题描述 → 教学视频"的过程拆成 4 个解耦阶段，
+ManimTool 把"输入（主题文字 / HTML 文章）→ 教学视频"的过程拆成解耦阶段，
 通过统一的 Pydantic Schema 在阶段之间流转数据。
 
 ```text
-┌──────────┐   topic    ┌──────────┐ Storyboard ┌──────────┐ RenderedScene
-│   CLI    │ ─────────► │   LLM    │ ─────────► │  Render  │ ─────────────┐
-└──────────┘            └──────────┘            └──────────┘              │
-                                                                          ▼
-                                                                    ┌──────────┐
-                                                                    │   TTS    │
-                                                                    └────┬─────┘
-                                                                         │ TTSResult
-                                                                         ▼
-                                                                    ┌──────────┐
-                                                                    │  Video   │ ─► mp4
-                                                                    │ Compose  │
-                                                                    └──────────┘
+                        topic ──► LLM ─┐
+                                       ├──► Storyboard ──► Render ──► RenderedScene
+   HTML 文章 ──► Article Loader ───────┘                                │
+                                                                       ▼
+                                                                   TTS (Edge-TTS)
+                                                                       │  TTSResult
+                                                                       ▼
+                                                          Compose (MoviePy / FFmpeg)
+                                                                       │
+                                                                       ▼
+                                                                      mp4
 ```
+
+**视频合成层**新增的核心特性：
+- 顶部章节进度条 + 当前章节高亮（基于 `ChapterMeta`）
+- 底部字幕（基于 `TTSResult.cues`，由 edge-tts WordBoundary 时间戳生成）
+- 图与旁白严格对齐（每个 Scene 时长 = 该 Scene 的 TTS 实际时长）
 
 ## 2. 模块职责（单一职责，禁止跨界）
 
 | 模块 | 输入 | 输出 | 关键约束 |
 |---|---|---|---|
 | `manimtool.llm` | `topic: str` | `Storyboard` | provider 可插拔；输出必须通过 Pydantic 校验 |
+| `manimtool.article` | `Path(.html)` | `Storyboard` | 用 `html.parser` 解析 `<section data-scene-id>`；不依赖 LLM |
 | `manimtool.render` | `Scene` | `RenderedScene`（PNG 路径） | 仅渲染，不做排版；失败抛 `RenderError` |
-| `manimtool.tts` | `Scene` | `TTSResult`（音频 + 时长） | 必须返回精确时长，供视频对齐 |
-| `manimtool.video` | `list[SceneArtifact]` | `VideoArtifact` | 时长以 TTS 为准；不调用 LLM/TTS |
+| `manimtool.tts` | `Scene` | `TTSResult`（音频 + 时长 + 字幕条目） | 必须返回精确时长与 `cues`，供视频对齐 |
+| `manimtool.video` | `list[SceneArtifact]` | `VideoArtifact` | 时长以 TTS 为准；不调用 LLM/TTS；进度条与字幕在此叠加 |
 | `manimtool.pipeline` | 上述全部 | `VideoArtifact` | 仅做编排，不实现业务逻辑 |
 | `manimtool.cli` | argv | exit code | 只做参数解析与 IO，不写业务 |
 

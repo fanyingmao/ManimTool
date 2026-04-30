@@ -58,7 +58,7 @@ class AnthropicLLM(BaseLLM):
                 m = _JSON_BLOCK.search(text)
                 payload = m.group(0) if m else text
                 return Storyboard.model_validate(json.loads(payload))
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 last_err = e
                 logger.warning(
                     f"Anthropic 调用失败（第 {attempt + 1}/{self.config.retries + 1} 次）：{e}"
