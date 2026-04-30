@@ -1,16 +1,10 @@
-"""Anthropic Claude 客户端实现（骨架）。
-
-TODO(cursor):
-    - 调用 `anthropic` SDK 的 `messages.create`
-    - System prompt 作为 system 字段传入
-    - User 消息要求只输出 JSON
-    - 用 tenacity 重试，并对 `json.JSONDecodeError` / Pydantic 校验失败做一次"修复重试"
-"""
+"""Anthropic Claude 客户端实现。"""
 
 from __future__ import annotations
 
 import json
 import os
+import re
 
 from anthropic import Anthropic
 from pydantic import ValidationError
@@ -19,6 +13,8 @@ from tenacity import RetryError, retry, stop_after_attempt, wait_exponential
 from manimtool.errors import LLMError
 from manimtool.llm.base import BaseLLM
 from manimtool.schemas import Storyboard
+
+_JSON_BLOCK = re.compile(r"\{[\s\S]*\}")
 
 
 class AnthropicLLM(BaseLLM):
@@ -54,8 +50,11 @@ class AnthropicLLM(BaseLLM):
             content = "\n".join(text_blocks).strip()
             if not content:
                 raise LLMError("Anthropic 返回空内容")
+            # 模型偶尔会在 JSON 前后带说明文字，提取最外层 {...}
+            m = _JSON_BLOCK.search(content)
+            payload_str = m.group(0) if m else content
             try:
-                payload = json.loads(content)
+                payload = json.loads(payload_str)
                 return Storyboard.model_validate(payload)
             except (json.JSONDecodeError, ValidationError) as exc:
                 raise LLMError(f"Anthropic 输出解析失败: {exc}") from exc

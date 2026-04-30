@@ -21,6 +21,9 @@ dependencies = [
     # 视频/音频
     "moviepy>=1.0.3",
     "imageio-ffmpeg>=0.4.9",
+    "Pillow>=10.0.0",
+    "numpy>=1.24.0",
+    "mutagen>=1.47.0",
     # 配置/数据校验
     "pydantic>=2.6.0",
     "pydantic-settings>=2.2.0",
@@ -42,6 +45,7 @@ dev = [
     "ruff>=0.4.0",
     "mypy>=1.10.0",
     "pre-commit>=3.7.0",
+    "types-PyYAML>=6.0",
 ]
 
 [project.scripts]
@@ -61,7 +65,9 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "RUF"]
-ignore = ["E501"]
+# RUF001/2/3：项目大量包含中文字符（标点、注释、文档），不视为问题
+# RUF046：int(round(...)) 在某些场景下可读性更好
+ignore = ["E501", "RUF001", "RUF002", "RUF003", "RUF046"]
 
 [tool.ruff.format]
 quote-style = "double"

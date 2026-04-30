@@ -32,15 +32,15 @@ def test_openai_generate_storyboard_success(monkeypatch) -> None:
 
             message = _Msg()
 
-        choices = [_Choice()]
+        choices = [_Choice()]  # noqa: RUF012
 
     class _Completions:
         @staticmethod
-        def create(**kwargs):  # noqa: ANN003
+        def create(**kwargs):
             return _Resp()
 
     class _Client:
-        class chat:
+        class chat:  # noqa: N801 - 模拟 OpenAI SDK 的小写命名
             completions = _Completions()
 
     monkeypatch.setenv("OPENAI_API_KEY", "k")

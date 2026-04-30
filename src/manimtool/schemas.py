@@ -65,6 +65,14 @@ class RenderedScene(BaseModel):
     height: int
 
 
+class SubtitleCue(BaseModel):
+    """单条字幕：用于 TTS WordBoundary 对齐与视频内字幕渲染。"""
+
+    start: float = Field(..., ge=0, description="开始时间（秒）")
+    end: float = Field(..., ge=0, description="结束时间（秒）")
+    text: str = Field(..., min_length=1)
+
+
 class TTSResult(BaseModel):
     """TTS 阶段的产物。"""
 
@@ -72,6 +80,10 @@ class TTSResult(BaseModel):
     audio_path: Path
     duration: float = Field(..., ge=0, description="音频时长（秒）")
     subtitle_path: Path | None = None
+    cues: list[SubtitleCue] = Field(
+        default_factory=list,
+        description="按时间排序的字幕分段；为空时由合成器按 narration 整段显示",
+    )
 
 
 class SceneArtifact(BaseModel):
@@ -134,10 +146,28 @@ class VideoConfig(BaseModel):
     background_color: str = "#0E1117"
     font: str = "Noto Sans CJK SC"
     font_size: int = 42
+    title_font_size: int = 56
+    subtitle_font_size: int = 38
     subtitle_enabled: bool = True
     transition: Literal["none", "fade", "slide"] = "fade"
     transition_duration: float = 0.5
-    motion_enabled: bool = True
+    progress_bar_enabled: bool = Field(
+        default=True,
+        description="是否在视频顶部显示章节进度条 / 章节标签",
+    )
+    progress_bar_height: int = 14
+    progress_bar_color: str = "#4C6EF5"
+    progress_bar_bg_color: str = "#2B2F38"
+    progress_bar_padding: int = 28
+    chapter_label_color: str = "#FFFFFF"
+    subtitle_box_color: str = "#000000"
+    subtitle_box_opacity: float = 0.55
+    image_padding_top: int = 160
+    image_padding_bottom: int = 240
+    motion_enabled: bool = Field(
+        default=True,
+        description="启用静态图轻微缩放，营造 Ken Burns 效果",
+    )
     motion_zoom_speed: float = 0.0006
     scene_fade_duration: float = 0.4
     title_enabled: bool = True

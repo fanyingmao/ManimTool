@@ -1,16 +1,14 @@
-"""Edge-TTS 客户端（骨架）。
+"""Edge-TTS 客户端实现。
 
-实现要点（TODO cursor）：
-    - 使用 `edge_tts.Communicate(text, voice, rate, volume, pitch)`
-    - 通过 `await communicate.save(audio_path)` 写出 mp3
-    - 同时调用 `communicate.stream()` 抓取 WordBoundary 事件，写出 SRT 字幕
-    - 用 `imageio_ffmpeg` 或 `mutagen` 探测时长（不要再读一遍音频）
-    - 同步入口包装：`asyncio.run(_async_synthesize(...))`
+将 ``scene.narration`` 合成为 mp3 音频，同时利用 ``edge-tts`` 的
+``WordBoundary`` 事件构造逐字字幕，落盘为 SRT，并返回精确时长与按
+软标点切分后的 ``SubtitleCue`` 列表（供视频合成器在画面底部滚动）。
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -18,105 +16,251 @@ from pathlib import Path
 import edge_tts
 
 from manimtool.errors import TTSError
-from manimtool.schemas import Scene, TTSResult
+from manimtool.logging import logger
+from manimtool.schemas import Scene, SubtitleCue, TTSResult
 from manimtool.tts.base import BaseTTS
+
+
+def _format_srt_timestamp(seconds: float) -> str:
+    if seconds < 0:
+        seconds = 0.0
+    millis = int(round(seconds * 1000))
+    hours, millis = divmod(millis, 3600 * 1000)
+    minutes, millis = divmod(millis, 60 * 1000)
+    secs, millis = divmod(millis, 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+
+
+def _write_srt(cues: list[SubtitleCue], path: Path) -> None:
+    lines: list[str] = []
+    for idx, cue in enumerate(cues, start=1):
+        lines.append(str(idx))
+        lines.append(f"{_format_srt_timestamp(cue.start)} --> {_format_srt_timestamp(cue.end)}")
+        lines.append(cue.text)
+        lines.append("")
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _detect_audio_duration(path: Path) -> float | None:
+    """优先用 ffprobe（最准），其次 mutagen，再次 imageio_ffmpeg 自带的 ffprobe。
+
+    无法检测时返回 ``None``，由调用方决定回退策略。
+    """
+    ffprobe = shutil.which("ffprobe")
+    if ffprobe is not None:
+        try:
+            result = subprocess.run(
+                [
+                    ffprobe,
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "default=noprint_wrappers=1:nokey=1",
+                    str(path),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            value = float(result.stdout.strip())
+            if value > 0:
+                return value
+        except (subprocess.CalledProcessError, ValueError):
+            pass
+
+    try:
+        from mutagen.mp3 import MP3
+
+        info = MP3(str(path)).info
+        value = float(info.length)
+        if value > 0:
+            return value
+    except Exception:
+        pass
+
+    try:
+        from imageio_ffmpeg import get_ffmpeg_exe
+
+        bundled_probe = get_ffmpeg_exe().replace("ffmpeg", "ffprobe")
+        cmd = [
+            bundled_probe,
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "json",
+            str(path),
+        ]
+        out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
+        value = float(json.loads(out)["format"]["duration"])
+        if value > 0:
+            return value
+    except Exception:
+        pass
+    return None
+
+
+def _chunk_narration(text: str, max_chars: int = 28) -> list[str]:
+    """把整段旁白切成短句，便于字幕滚动显示。
+
+    策略：
+        1. 先按强标点（句号/问号等）切成"句"
+        2. 句内若仍长，按软标点（中文逗号、顿号）切成"短语"
+        3. 把过短的相邻短语合并到接近 ``max_chars``，避免出现单独 1-2 字的孤行
+        4. 仍然超长的纯文本（无标点）按字符硬切，但容忍 ``max_chars * 1.5``
+    """
+    if not text.strip():
+        return []
+    hard_seps = "。！？!?；;\n"
+    soft_seps = "，,、 "
+
+    def _split(s: str, seps: str) -> list[str]:
+        parts: list[str] = []
+        buf = ""
+        for ch in s:
+            buf += ch
+            if ch in seps and buf.strip():
+                parts.append(buf.strip())
+                buf = ""
+        if buf.strip():
+            parts.append(buf.strip())
+        return parts
+
+    sentences = _split(text, hard_seps)
+
+    final: list[str] = []
+    for sent in sentences:
+        if len(sent) <= max_chars:
+            final.append(sent)
+            continue
+        sub_phrases = _split(sent, soft_seps)
+        merged: list[str] = []
+        cur = ""
+        for p in sub_phrases:
+            if not cur:
+                cur = p
+            elif len(cur) + len(p) <= max_chars:
+                cur = cur + p
+            else:
+                merged.append(cur)
+                cur = p
+        if cur:
+            merged.append(cur)
+        for m in merged:
+            if len(m) <= int(max_chars * 1.5):
+                final.append(m)
+                continue
+            buf = ""
+            for ch in m:
+                buf += ch
+                if len(buf) >= max_chars:
+                    final.append(buf)
+                    buf = ""
+            if buf:
+                final.append(buf)
+    return [c.strip() for c in final if c.strip()]
+
+
+def _cues_from_word_boundaries(
+    boundaries: list[tuple[float, float, str]],
+    chunks: list[str],
+) -> list[SubtitleCue]:
+    """根据 WordBoundary 时间戳，把字符聚合成与 chunks 对齐的字幕条。
+
+    boundaries: list of (offset_seconds, duration_seconds, text)
+    """
+    if not boundaries or not chunks:
+        return []
+
+    cues: list[SubtitleCue] = []
+    bi = 0
+    for chunk in chunks:
+        target = "".join(chunk.split())
+        if not target:
+            continue
+        start = boundaries[bi][0]
+        consumed = ""
+        end = start
+        while bi < len(boundaries) and len(consumed) < len(target):
+            off, dur, txt = boundaries[bi]
+            consumed += "".join(txt.split())
+            end = off + dur
+            bi += 1
+        cues.append(SubtitleCue(start=start, end=end, text=chunk))
+    return cues
 
 
 class EdgeTTS(BaseTTS):
     def synthesize(self, scene: Scene, output_dir: Path) -> TTSResult:
+        try:
+            return asyncio.run(self._async_synthesize(scene, output_dir))
+        except TTSError:
+            raise
+        except Exception as e:
+            raise TTSError(f"edge-tts 合成失败 (scene={scene.id}): {e}") from e
+
+    async def _async_synthesize(self, scene: Scene, output_dir: Path) -> TTSResult:
         output_dir.mkdir(parents=True, exist_ok=True)
         audio_path = output_dir / f"{scene.id}.mp3"
-        subtitle_path = output_dir / f"{scene.id}.srt"
+        srt_candidate = output_dir / f"{scene.id}.srt"
 
-        async def _async_synthesize() -> tuple[float, bool]:
-            communicate = edge_tts.Communicate(
-                text=scene.narration,
-                voice=self.config.voice,
-                rate=self.config.rate,
-                volume=self.config.volume,
-                pitch=self.config.pitch,
-            )
-            audio_data = bytearray()
-            max_end_seconds = 0.0
-            subtitle_lines: list[str] = []
-            subtitle_index = 1
+        communicate = edge_tts.Communicate(
+            text=scene.narration,
+            voice=self.config.voice,
+            rate=self.config.rate,
+            volume=self.config.volume,
+            pitch=self.config.pitch,
+        )
 
+        boundaries: list[tuple[float, float, str]] = []
+        with audio_path.open("wb") as f:
             async for chunk in communicate.stream():
-                chunk_type = chunk.get("type")
-                if chunk_type == "audio":
-                    audio_data.extend(chunk["data"])
-                elif chunk_type == "WordBoundary":
-                    offset_sec = float(chunk["offset"]) / 10_000_000
-                    duration_sec = float(chunk["duration"]) / 10_000_000
-                    max_end_seconds = max(max_end_seconds, offset_sec + duration_sec)
-                    start = _format_srt_time(offset_sec)
-                    end = _format_srt_time(offset_sec + duration_sec)
-                    text = str(chunk["text"]).strip()
-                    if text:
-                        subtitle_lines.extend([str(subtitle_index), f"{start} --> {end}", text, ""])
-                        subtitle_index += 1
+                ctype = chunk.get("type")
+                if ctype == "audio":
+                    f.write(chunk["data"])
+                elif ctype == "WordBoundary":
+                    offset = float(chunk.get("offset", 0)) / 1e7
+                    word_dur = float(chunk.get("duration", 0)) / 1e7
+                    text = str(chunk.get("text", ""))
+                    boundaries.append((offset, word_dur, text))
 
-            if not audio_data:
-                raise TTSError("Edge-TTS 未返回音频数据")
+        if not audio_path.exists() or audio_path.stat().st_size == 0:
+            raise TTSError(f"edge-tts 未输出音频: {audio_path}")
 
-            audio_path.write_bytes(bytes(audio_data))
-            subtitle_text = "\n".join(subtitle_lines).strip()
-            has_subtitle = bool(subtitle_text.strip())
-            if has_subtitle:
-                subtitle_path.write_text(subtitle_text, encoding="utf-8")
+        probed = _detect_audio_duration(audio_path)
+        if probed is not None:
+            total_duration = probed
+        elif boundaries:
+            total_duration = max(off + dur for off, dur, _ in boundaries)
+        else:
+            total_duration = max(1.0, len(scene.narration) * 0.12)
 
-            # 必须以真实音频时长为准，避免出现旁白未结束就切场。
-            probed_duration = _probe_audio_duration(audio_path)
-            if probed_duration is not None and probed_duration > 0:
-                duration = probed_duration
-            else:
-                # ffprobe 不可用时，退回到 WordBoundary；再兜底文本估算。
-                duration = (
-                    max_end_seconds if max_end_seconds > 0 else max(1.0, len(scene.narration) * 0.12)
-                )
-            return duration, has_subtitle
+        chunks = _chunk_narration(scene.narration)
+        cues = _cues_from_word_boundaries(boundaries, chunks)
+        if not cues and chunks:
+            per = total_duration / max(len(chunks), 1)
+            cues = [
+                SubtitleCue(start=i * per, end=(i + 1) * per, text=c)
+                for i, c in enumerate(chunks)
+            ]
+        srt_path: Path | None = None
+        if cues:
+            cues[-1] = SubtitleCue(
+                start=cues[-1].start, end=total_duration, text=cues[-1].text
+            )
+            _write_srt(cues, srt_candidate)
+            srt_path = srt_candidate
 
-        try:
-            duration, has_subtitle = asyncio.run(_async_synthesize())
-        except Exception as exc:
-            if isinstance(exc, TTSError):
-                raise
-            raise TTSError(f"Edge-TTS 合成失败: {exc}") from exc
-
+        logger.debug(
+            f"TTS 完成 scene={scene.id} duration={total_duration:.2f}s cues={len(cues)}"
+        )
         return TTSResult(
             scene_id=scene.id,
             audio_path=audio_path,
-            duration=duration,
-            subtitle_path=subtitle_path if has_subtitle else None,
+            duration=total_duration,
+            subtitle_path=srt_path,
+            cues=cues,
         )
-
-
-def _format_srt_time(seconds: float) -> str:
-    total_ms = max(int(seconds * 1000), 0)
-    hours = total_ms // 3_600_000
-    minutes = (total_ms % 3_600_000) // 60_000
-    secs = (total_ms % 60_000) // 1000
-    ms = total_ms % 1000
-    return f"{hours:02d}:{minutes:02d}:{secs:02d},{ms:03d}"
-
-
-def _probe_audio_duration(audio_path: Path) -> float | None:
-    ffprobe_bin = shutil.which("ffprobe")
-    if ffprobe_bin is None:
-        return None
-    cmd = [
-        ffprobe_bin,
-        "-v",
-        "error",
-        "-show_entries",
-        "format=duration",
-        "-of",
-        "default=noprint_wrappers=1:nokey=1",
-        str(audio_path),
-    ]
-    try:
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-        value = float(result.stdout.strip())
-        return value if value > 0 else None
-    except Exception:
-        return None

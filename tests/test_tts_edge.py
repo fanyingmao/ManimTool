@@ -8,7 +8,7 @@ from manimtool.tts.edge_tts_client import EdgeTTS
 
 def test_edge_tts_synthesize_writes_audio_and_subtitle(tmp_path: Path, monkeypatch) -> None:
     class _FakeCommunicate:
-        def __init__(self, **kwargs):  # noqa: ANN003
+        def __init__(self, **kwargs):
             self._events = [
                 {"type": "audio", "data": b"abc"},
                 {

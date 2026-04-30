@@ -36,7 +36,7 @@ def test_pipeline_e2e_with_mocks(tmp_path: Path, monkeypatch) -> None:
 
     class _Composer:
         @staticmethod
-        def compose(title: str, artifacts, output_path: Path):  # noqa: ANN001, ANN205
+        def compose(title: str, artifacts, output_path: Path):
             output_path.write_bytes(b"video")
             return VideoArtifact(title=title, video_path=output_path, duration=1.0, scenes=artifacts)
 

@@ -29,7 +29,15 @@ def _artifact(tmp_path: Path) -> SceneArtifact:
 
 
 def test_ffmpeg_composer_requires_binary(tmp_path: Path, monkeypatch) -> None:
+    """没有 ffmpeg 也没有 imageio_ffmpeg 时应抛 VideoComposeError。"""
     monkeypatch.setattr("manimtool.video.ffmpeg_composer.shutil.which", lambda _: None)
+
+    def _raise(*_a, **_kw):
+        raise VideoComposeError("no ffmpeg available")
+
+    monkeypatch.setattr(
+        "manimtool.video.ffmpeg_composer._resolve_ffmpeg", _raise
+    )
     composer = FFmpegComposer(VideoConfig())
     with pytest.raises(VideoComposeError):
         composer.compose("t", [_artifact(tmp_path)], tmp_path / "out.mp4")
