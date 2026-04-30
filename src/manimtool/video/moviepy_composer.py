@@ -5,6 +5,7 @@
       确保"读到对应内容才显示对应内容"
     - 顶部叠加章节进度条 + 章节标签条（基于全片累计进度）
     - 底部按 SubtitleCue 时间窗滚动字幕
+    - 若 ``Scene.reveal_points`` 非空，在画面左上角叠加按时间逐步出现的要点面板
     - 场景之间使用 crossfade 过渡（可关闭）
 """
 
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from PIL import Image, ImageDraw
 
 try:  # MoviePy 1.x
     from moviepy.editor import (
@@ -36,7 +38,7 @@ except ImportError:  # MoviePy 2.x
 
 from manimtool.errors import VideoComposeError
 from manimtool.logging import logger
-from manimtool.schemas import SceneArtifact, VideoArtifact
+from manimtool.schemas import Scene, SceneArtifact, VideoArtifact
 from manimtool.video.base import BaseComposer
 from manimtool.video.overlays import (
     ChapterMeta,
@@ -45,6 +47,9 @@ from manimtool.video.overlays import (
     render_progress_bar,
     render_subtitle,
     to_numpy,
+)
+from manimtool.video.overlays import (
+    _load_font as _overlay_load_font,
 )
 
 
@@ -58,6 +63,12 @@ def _set_start(clip: Any, t: float) -> Any:
     if hasattr(clip, "with_start"):
         return clip.with_start(t)
     return clip.set_start(t)
+
+
+def _set_end(clip: Any, t: float) -> Any:
+    if hasattr(clip, "with_end"):
+        return clip.with_end(t)
+    return clip.set_end(t)
 
 
 def _set_duration(clip: Any, d: float) -> Any:
@@ -229,6 +240,16 @@ class MoviePyComposer(BaseComposer):
             except Exception as e:
                 logger.warning(f"进度条层创建失败，跳过: {e}")
 
+        # Scene.reveal_points：按时间逐步显示左上角要点面板
+        if art.scene.reveal_points:
+            try:
+                reveal_clips = self._build_reveal_clips(
+                    art.scene, duration=duration, style=style
+                )
+                layers.extend(reveal_clips)
+            except Exception as e:
+                logger.warning(f"reveal points 层创建失败，跳过: {e}")
+
         if self.config.subtitle_enabled and art.tts.cues:
             subtitle_clips = self._build_subtitle_clips(art, style, duration)
             layers.extend(subtitle_clips)
@@ -297,3 +318,68 @@ class MoviePyComposer(BaseComposer):
             sub_clip = _set_start(sub_clip, cue.start)
             clips.append(sub_clip)
         return clips
+
+    def _build_reveal_clips(
+        self,
+        scene: Scene,
+        *,
+        duration: float,
+        style: OverlayStyle,
+    ) -> list[Any]:
+        """按 ``scene.reveal_points`` 的顺序，分时间窗叠加左上角要点面板。"""
+        points = [p.strip() for p in scene.reveal_points if p.strip()]
+        if not points:
+            return []
+
+        panel_w = min(640, max(320, style.width // 3))
+        panel_h = min(420, max(200, style.height // 3))
+        margin_x = 40
+        margin_y = max(140, getattr(self.config, "image_padding_top", 160) - 20)
+
+        step = duration / len(points)
+        clips: list[Any] = []
+        for idx in range(len(points)):
+            start = idx * step
+            end = duration if idx == len(points) - 1 else (idx + 1) * step
+            text = f"{scene.title}\n" + "\n".join(
+                f"- {line}" for line in points[: idx + 1]
+            )
+            panel = _render_reveal_panel(
+                text,
+                width=panel_w,
+                height=panel_h,
+                font=style.font,
+                title_font_size=max(28, style.subtitle_font_size),
+                body_font_size=max(22, int(style.subtitle_font_size * 0.7)),
+            )
+            arr = np.array(panel)
+            clip = ImageClip(arr, duration=end - start, transparent=True)
+            clip = _set_position(clip, (margin_x, margin_y))
+            clip = _set_start(clip, start)
+            clip = _set_end(clip, end)
+            clips.append(clip)
+        return clips
+
+
+def _render_reveal_panel(
+    text: str,
+    *,
+    width: int,
+    height: int,
+    font: str,
+    title_font_size: int,
+    body_font_size: int,
+) -> Image.Image:
+    image = Image.new("RGBA", (width, height), (0, 0, 0, 165))
+    draw = ImageDraw.Draw(image)
+    title_font = _overlay_load_font(font, title_font_size)
+    body_font = _overlay_load_font(font, body_font_size)
+    lines = text.split("\n")
+    y = 18
+    for idx, line in enumerate(lines):
+        f = title_font if idx == 0 else body_font
+        draw.text((20, y), line, fill=(255, 255, 255, 255), font=f)
+        y += title_font_size + 8 if idx == 0 else body_font_size + 6
+        if y > height - body_font_size:
+            break
+    return image

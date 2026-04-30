@@ -28,6 +28,11 @@ class Scene(BaseModel):
     duration_hint: float | None = Field(
         default=None, description="建议时长（秒），最终以 TTS 实际时长为准", ge=0
     )
+    reveal_points: list[str] = Field(
+        default_factory=list,
+        description="可选：按讲解节奏逐步展示的要点文案，按顺序出现",
+        max_length=8,
+    )
 
     @field_validator("mermaid")
     @classmethod
@@ -159,6 +164,13 @@ class VideoConfig(BaseModel):
     subtitle_box_opacity: float = 0.55
     image_padding_top: int = 160
     image_padding_bottom: int = 240
+    motion_enabled: bool = Field(
+        default=True,
+        description="启用静态图轻微缩放，营造 Ken Burns 效果",
+    )
+    motion_zoom_speed: float = 0.0006
+    scene_fade_duration: float = 0.4
+    title_enabled: bool = True
 
 
 class ProjectConfig(BaseModel):

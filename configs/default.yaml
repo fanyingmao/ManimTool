@@ -43,3 +43,7 @@ video:
   subtitle_enabled: true
   transition: "fade"          # none | fade | slide
   transition_duration: 0.5
+  motion_enabled: true
+  motion_zoom_speed: 0.0006
+  scene_fade_duration: 0.4
+  title_enabled: true

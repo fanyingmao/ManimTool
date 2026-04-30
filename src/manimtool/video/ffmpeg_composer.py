@@ -1,7 +1,8 @@
 """基于 FFmpeg 命令行的视频合成器。
 
 实现要点：
-    - 每个 scene 单独生成 mp4 段：背景画布 + Mermaid 图 + 顶部进度条（多帧覆盖）+ 字幕（SRT 烧录）
+    - 每个 scene 单独生成 mp4 段：背景画布 + Mermaid 图 + 顶部进度条
+      + 字幕（SRT 烧录）+ 可选场景淡入淡出 / Ken Burns 缩放 / 要点 reveal
     - 用 concat demuxer 合并所有片段
     - 适合服务器/无 GUI 环境，无需 MoviePy
 """
@@ -12,9 +13,6 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-
-import numpy as np
-from PIL import Image
 
 from manimtool.errors import VideoComposeError
 from manimtool.logging import logger
@@ -59,6 +57,45 @@ def _write_srt(cues: list[SubtitleCue], path: Path) -> None:
         lines.append(cue.text)
         lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _write_reveal_srt(
+    path: Path,
+    title: str,
+    reveal_points: list[str],
+    duration: float,
+) -> None:
+    """根据 ``Scene.reveal_points`` 写一份"标题 + 渐进显示要点"的 SRT。"""
+    points = [p.strip() for p in reveal_points if p.strip()]
+    safe_title = f"【{title}】"
+    cues: list[tuple[float, float, str]] = []
+    if not points:
+        cues.append((0.0, duration, safe_title))
+    else:
+        step = duration / len(points)
+        for idx in range(len(points)):
+            start = idx * step
+            end = duration if idx == len(points) - 1 else (idx + 1) * step
+            shown = "\n".join(f"- {line}" for line in points[: idx + 1])
+            cues.append((start, end, f"{safe_title}\n{shown}"))
+
+    lines: list[str] = []
+    for i, (start, end, text) in enumerate(cues, start=1):
+        lines.extend(
+            [
+                str(i),
+                f"{_format_srt_timestamp(start)} --> {_format_srt_timestamp(end)}",
+                text,
+                "",
+            ]
+        )
+    path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+
+
+def _ffmpeg_escape_subtitle_path(path: Path) -> str:
+    """ffmpeg subtitles filter 中 ':' 与单引号需要转义。"""
+    s = path.as_posix()
+    return s.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
 
 
 class FFmpegComposer(BaseComposer):
@@ -175,6 +212,16 @@ class FFmpegComposer(BaseComposer):
             srt_path = work / f"subs_{idx:03d}.srt"
             _write_srt(art.tts.cues, srt_path)
 
+        reveal_srt_path: Path | None = None
+        if art.scene.reveal_points:
+            reveal_srt_path = work / f"reveal_{idx:03d}.srt"
+            _write_reveal_srt(
+                reveal_srt_path,
+                title=art.scene.title,
+                reveal_points=art.scene.reveal_points,
+                duration=duration,
+            )
+
         out_seg = work / f"scene_{idx:03d}.mp4"
 
         inputs: list[str] = [
@@ -199,10 +246,23 @@ class FFmpegComposer(BaseComposer):
         filter_parts: list[str] = []
         last_label = "[0:v]"
 
+        # 可选：Ken Burns 轻微缩放，避免画面完全静止
+        if getattr(self.config, "motion_enabled", False):
+            zoom_speed = max(0.0, float(getattr(self.config, "motion_zoom_speed", 0.0006)))
+            if zoom_speed > 0:
+                total_frames = max(1, int(duration * fps))
+                filter_parts.append(
+                    f"{last_label}zoompan="
+                    f"z='min(zoom+{zoom_speed:.6f},1.12)':"
+                    "x='iw/2-(iw/zoom/2)':"
+                    "y='ih/2-(ih/zoom/2)':"
+                    f"d={total_frames}:s={width}x{height}:fps={fps}[zoom]"
+                )
+                last_label = "[zoom]"
+
         if bar_path is not None and bar_box is not None:
             x0, y0, x1, h = bar_box
-            current_seg_x_in_label = self._segment_x_range(chapters, idx, x0, x1)
-            seg_x0, seg_x1 = current_seg_x_in_label
+            seg_x0, seg_x1 = self._segment_x_range(chapters, idx, x0, x1)
             seg_w = seg_x1 - seg_x0
             color_hex = "{:02x}{:02x}{:02x}".format(*hex_to_rgb(style.progress_bar_color))
             filter_parts.append(
@@ -216,8 +276,33 @@ class FFmpegComposer(BaseComposer):
             )
             last_label = "[bg2]"
 
+        # 场景淡入淡出
+        fade_d = max(0.0, float(getattr(self.config, "scene_fade_duration", 0.0)))
+        fade_d = min(fade_d, duration / 3) if duration > 0 else 0
+        if fade_d > 0:
+            fade_out_start = max(duration - fade_d, 0)
+            filter_parts.append(
+                f"{last_label}fade=t=in:st=0:d={fade_d:.3f},"
+                f"fade=t=out:st={fade_out_start:.3f}:d={fade_d:.3f}[faded]"
+            )
+            last_label = "[faded]"
+
+        # reveal_points：在画面上方区域显示渐进要点（独立 SRT，置顶对齐）
+        if reveal_srt_path is not None:
+            reveal_str = _ffmpeg_escape_subtitle_path(reveal_srt_path)
+            reveal_font = max(16, int(self.config.subtitle_font_size * 0.55 * 288 / max(height, 1)))
+            reveal_filter = (
+                f"subtitles='{reveal_str}':"
+                f"original_size={width}x{height}:"
+                f"force_style='Fontsize={reveal_font},Alignment=7,"
+                "PrimaryColour=&H00FFFFFF&,OutlineColour=&HC8000000&,BackColour=&HC8000000&,"
+                "BorderStyle=3,Outline=4,Shadow=0,MarginL=40,MarginV=160,Spacing=1'"
+            )
+            filter_parts.append(f"{last_label}{reveal_filter}[withrev]")
+            last_label = "[withrev]"
+
         if srt_path:
-            srt_str = srt_path.as_posix().replace(":", "\\:")
+            srt_str = _ffmpeg_escape_subtitle_path(srt_path)
             # ASS Fontsize 单位是 PlayResY（默认 288）下的像素；目标视频高度 1080
             # 时，等价像素 ≈ Fontsize * height / 288。
             target_px = max(28, int(self.config.subtitle_font_size * 0.65))
@@ -287,7 +372,3 @@ class FFmpegComposer(BaseComposer):
             raise VideoComposeError(
                 f"ffmpeg 调用失败: {e.stderr[:1500] if e.stderr else e}"
             ) from e
-
-
-# 占位以保留与原导入兼容（未使用）
-_ = (np, Image)

@@ -88,8 +88,8 @@ flowchart TB
 
 | 后端 | 速度 | 转场 | 备注 |
 |---|---|---|---|
-| `ffmpeg` | 快（~30s 出 100s 视频） | ✗ | 纯命令行，烧录 SRT，进度条用 drawbox 动态绘制 |
-| `moviepy` | 慢（~3min 出 100s 视频） | ✓ fade | Python 端合成，叠加更灵活；支持转场 |
+| `ffmpeg` | 快（~30s 出 100s 视频） | ✓ 单镜淡入淡出 | 纯命令行，烧录 SRT，进度条用 drawbox 动态绘制；支持 Ken Burns 缩放与 reveal_points |
+| `moviepy` | 慢（~3min 出 100s 视频） | ✓ 镜间 fade | Python 端合成，叠加更灵活；支持镜头间 crossfade |
 
 ```bash
 manimtool from-html --html article.html --backend ffmpeg   # 默认快后端
@@ -142,3 +142,30 @@ make clean    # 清理产物
 ## License
 
 MIT
+
+## LLM 格式要求
+你是 ManimTool 的脚本生成器。请把我提供的正文改写为教学视频分镜 JSON。
+
+严格要求：
+1) 只输出 JSON，不要 markdown，不要解释，不要代码围栏。
+2) 顶层必须是：
+{
+  "title": "string",
+  "summary": "string",
+  "scenes": [ ... ]
+}
+3) scenes 至少 3 个，每个元素必须包含：
+- id: 蛇形英文唯一标识，匹配 ^[a-z][a-z0-9_]*$
+- title: 中文标题，尽量 <= 20 字
+- narration: 口播文案，1~120 字，通俗自然
+- mermaid: 可直接渲染的 Mermaid 源码（不要 ```mermaid 围栏）
+- duration_hint: 数字秒或 null
+- reveal_points: 可选，长度 <= 8 的字符串数组，按讲解节奏依次出现的要点文案；若不需要分步展示可省略或留空
+4) narration 与 mermaid 语义一致，避免空泛。
+5) mermaid 优先用 flowchart LR，保证语法正确可渲染。
+6) 如果信息不足，允许合理补全，但不要编造明显错误事实。
+7) 输出必须能被 json.loads 解析。
+
+请基于以下正文生成：
+
+【长文原文粘贴这里】
