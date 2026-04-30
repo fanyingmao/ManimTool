@@ -28,6 +28,11 @@ class Scene(BaseModel):
     duration_hint: float | None = Field(
         default=None, description="建议时长（秒），最终以 TTS 实际时长为准", ge=0
     )
+    reveal_points: list[str] = Field(
+        default_factory=list,
+        description="可选：按讲解节奏逐步展示的要点文案，按顺序出现",
+        max_length=8,
+    )
 
     @field_validator("mermaid")
     @classmethod
@@ -132,6 +137,10 @@ class VideoConfig(BaseModel):
     subtitle_enabled: bool = True
     transition: Literal["none", "fade", "slide"] = "fade"
     transition_duration: float = 0.5
+    motion_enabled: bool = True
+    motion_zoom_speed: float = 0.0006
+    scene_fade_duration: float = 0.4
+    title_enabled: bool = True
 
 
 class ProjectConfig(BaseModel):

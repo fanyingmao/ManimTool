@@ -93,3 +93,29 @@ make clean    # 清理产物
 ## License
 
 MIT
+
+## LLM 格式要求
+你是 ManimTool 的脚本生成器。请把我提供的正文改写为教学视频分镜 JSON。
+
+严格要求：
+1) 只输出 JSON，不要 markdown，不要解释，不要代码围栏。
+2) 顶层必须是：
+{
+  "title": "string",
+  "summary": "string",
+  "scenes": [ ... ]
+}
+3) scenes 至少 3 个，每个元素必须包含：
+- id: 蛇形英文唯一标识，匹配 ^[a-z][a-z0-9_]*$
+- title: 中文标题，尽量 <= 20 字
+- narration: 口播文案，1~120 字，通俗自然
+- mermaid: 可直接渲染的 Mermaid 源码（不要 ```mermaid 围栏）
+- duration_hint: 数字秒或 null
+4) narration 与 mermaid 语义一致，避免空泛。
+5) mermaid 优先用 flowchart LR，保证语法正确可渲染。
+6) 如果信息不足，允许合理补全，但不要编造明显错误事实。
+7) 输出必须能被 json.loads 解析。
+
+请基于以下正文生成：
+
+【长文原文粘贴这里】
