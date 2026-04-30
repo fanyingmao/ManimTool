@@ -11,8 +11,9 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -40,6 +41,7 @@ from manimtool.errors import VideoComposeError
 from manimtool.logging import logger
 from manimtool.schemas import Scene, SceneArtifact, VideoArtifact
 from manimtool.video.base import BaseComposer
+from manimtool.video.codec_util import effective_video_codec
 from manimtool.video.overlays import (
     ChapterMeta,
     OverlayStyle,
@@ -101,6 +103,36 @@ def _crossfadein(clip: Any, d: float) -> Any:
         return clip
 
 
+def _encode_thread_count(config: Any) -> int:
+    n = getattr(config, "encode_threads", None)
+    if n is not None and int(n) > 0:
+        return int(n)
+    cores = os.cpu_count() or 4
+    # libx264 可吃多线程；Apple Silicon 常见 8～16 核，原先上限 8 偏保守
+    return max(4, min(16, cores))
+
+
+def _moviepy_effective_params(config: Any) -> tuple[int, int, int, Literal["none", "fade", "slide"], float, float, str]:
+    """根据 render_profile 得到 (宽, 高, fps, 场景转场, 转场时长秒, 进度条每秒分段, x264 preset)。"""
+    w, h = config.resolution
+    fps = int(config.fps)
+    transition: Literal["none", "fade", "slide"] = config.transition
+    trans_d = max(0.0, float(config.transition_duration))
+    seg = float(getattr(config, "progress_segments_per_second", 2.0))
+    preset = str(getattr(config, "encode_preset", "medium") or "medium")
+
+    if getattr(config, "render_profile", "normal") == "draft":
+        w, h = 1280, 720
+        fps = min(fps, 24)
+        seg = min(seg, 0.5)
+        transition = "none"
+        trans_d = 0.0
+        if preset in ("placebo", "veryslow", "slower", "slow", "medium"):
+            preset = "veryfast"
+
+    return w, h, fps, transition, trans_d, seg, preset
+
+
 def _style_from_config(config: Any, width: int, height: int) -> OverlayStyle:
     return OverlayStyle(
         width=width,
@@ -130,9 +162,22 @@ class MoviePyComposer(BaseComposer):
         if not artifacts:
             raise VideoComposeError("artifacts 为空，无法合成视频")
 
-        width, height = self.config.resolution
-        fps = self.config.fps
+        width, height, fps, eff_transition, transition_d, seg_per_sec, encode_preset = (
+            _moviepy_effective_params(self.config)
+        )
         style = _style_from_config(self.config, width, height)
+        encode_threads = _encode_thread_count(self.config)
+        logger.info(
+            "MoviePy 合成参数: profile=%s 画幅=%sx%s fps=%s 进度条分段/秒=%.2f 场景转场=%s preset=%s threads=%s",
+            getattr(self.config, "render_profile", "normal"),
+            width,
+            height,
+            fps,
+            seg_per_sec,
+            eff_transition,
+            encode_preset,
+            encode_threads,
+        )
 
         chapters = [
             ChapterMeta(
@@ -152,11 +197,11 @@ class MoviePyComposer(BaseComposer):
                     art=art,
                     chapters=chapters,
                     style=style,
+                    progress_segments_per_second=seg_per_sec,
                 )
                 scene_clips.append(clip)
 
-            transition = self.config.transition
-            transition_d = max(0.0, float(self.config.transition_duration))
+            transition = eff_transition
             if transition == "fade" and transition_d > 0 and len(scene_clips) > 1:
                 faded = [scene_clips[0]]
                 for c in scene_clips[1:]:
@@ -168,14 +213,19 @@ class MoviePyComposer(BaseComposer):
                 final = concatenate_videoclips(scene_clips, method="compose")
 
             output_path.parent.mkdir(parents=True, exist_ok=True)
+            encode_logger: str | None = (
+                "bar" if getattr(self.config, "moviepy_encode_progress", True) else None
+            )
+            vcodec = effective_video_codec(self.config)
+            logger.info(f"MoviePy 导出视频编码器: {vcodec}（encode_device={getattr(self.config, 'encode_device', 'cpu')}）")
             final.write_videofile(
                 str(output_path),
                 fps=fps,
-                codec=self.config.codec,
+                codec=vcodec,
                 audio_codec=self.config.audio_codec,
-                preset="medium",
-                threads=2,
-                logger=None,
+                preset=encode_preset,
+                threads=encode_threads,
+                logger=encode_logger,
             )
         except VideoComposeError:
             raise
@@ -203,6 +253,7 @@ class MoviePyComposer(BaseComposer):
         art: SceneArtifact,
         chapters: list[ChapterMeta],
         style: OverlayStyle,
+        progress_segments_per_second: float,
     ) -> Any:
         width, height = style.width, style.height
         duration = chapters[idx].duration
@@ -235,6 +286,7 @@ class MoviePyComposer(BaseComposer):
                     current_index=idx,
                     duration=duration,
                     style=style,
+                    segments_per_second=progress_segments_per_second,
                 )
                 layers.append(bar_clip)
             except Exception as e:
@@ -268,12 +320,13 @@ class MoviePyComposer(BaseComposer):
         current_index: int,
         duration: float,
         style: OverlayStyle,
+        segments_per_second: float,
     ) -> Any:
         """把章节进度条切成若干段 ``ImageClip``，叠成一个 ``CompositeVideoClip``。
 
         分段的中位时间作为该段的"当前进度"，segments_per_second 控制平滑度。
         """
-        segments_per_second = 4
+        segments_per_second = max(0.25, float(segments_per_second))
         n_segments = max(2, int(round(duration * segments_per_second)))
         seg_dur = duration / n_segments
         clips: list[Any] = []

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,8 @@ from manimtool.logging import logger
 
 _FONT_CACHE: dict[tuple[str, int], Any] = {}
 
-_FONT_CANDIDATES = [
+# Linux / 常见发行版
+_FONT_CANDIDATES_LINUX = [
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc",
@@ -26,23 +28,57 @@ _FONT_CANDIDATES = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 ]
 
+# macOS：PIL 必须用字体文件路径；PingFang / 冬青黑体等可覆盖中文
+_FONT_CANDIDATES_DARWIN = [
+    "/System/Library/Fonts/PingFang.ttc",
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "/System/Library/Fonts/STHeiti Medium.ttc",
+    "/System/Library/Fonts/STHeiti Light.ttc",
+    "/Library/Fonts/Arial Unicode.ttf",
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    "/System/Library/Fonts/Supplemental/Songti.ttc",
+    "/System/Library/Fonts/Supplemental/Kaiti.ttc",
+    "/opt/homebrew/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/opt/homebrew/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+]
+
+
+def _font_file_candidates(requested: str) -> list[str]:
+    """构造 PIL ImageFont.truetype 可用的路径列表（族名会被忽略，走平台默认）。"""
+    out: list[str] = []
+    if requested:
+        p = Path(requested).expanduser()
+        if p.is_file():
+            out.append(str(p.resolve()))
+        # 族名如 "Noto Sans CJK SC" 不能传给 truetype，否则会失败
+    if sys.platform == "darwin":
+        out.extend(_FONT_CANDIDATES_DARWIN)
+    out.extend(_FONT_CANDIDATES_LINUX)
+    # 去重保序
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for item in out:
+        if item not in seen:
+            seen.add(item)
+            uniq.append(item)
+    return uniq
+
 
 def _load_font(font: str, size: int) -> Any:
     key = (font, size)
     if key in _FONT_CACHE:
         return _FONT_CACHE[key]
-    candidates: list[str] = []
-    if font:
-        candidates.append(font)
-    candidates.extend(_FONT_CANDIDATES)
-    for path in candidates:
+    for path in _font_file_candidates(font):
         try:
             f = ImageFont.truetype(path, size=size)
             _FONT_CACHE[key] = f
             return f
         except (OSError, ValueError):
             continue
-    logger.warning(f"未找到合适字体（请求={font!r}），回退到 PIL 默认字体")
+    logger.warning(
+        f"未找到可渲染中文的字体文件（配置 font={font!r}）。"
+        "请在 video.font 中填写本机 .ttf/.ttc 绝对路径，或安装 Noto CJK。"
+    )
     return ImageFont.load_default()
 
 
@@ -86,21 +122,21 @@ def render_progress_bar(
     current_index: int,
     progress_in_chapter: float,
 ) -> Image.Image:
-    """绘制顶部进度条 + 章节标签条（带透明通道）。"""
+    """绘制顶部章节导航（进度嵌在标题带内，带透明通道）。"""
     width = style.width
-    bar_h = style.progress_bar_height
     pad = style.progress_bar_padding
-    label_h = max(style.subtitle_font_size + 18, 48)
-    total_h = pad + label_h + 12 + bar_h + pad // 2
+    label_h = max(style.subtitle_font_size + 20, 52)
+    total_h = pad + label_h + 10
 
     img = Image.new("RGBA", (width, total_h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
     label_font = _load_font(style.font, style.subtitle_font_size)
-    bar_y = pad + label_h + 12
-    bar_x0 = pad
-    bar_x1 = width - pad
-    bar_w = bar_x1 - bar_x0
+    nav_y0 = pad
+    nav_y1 = nav_y0 + label_h
+    nav_x0 = pad
+    nav_x1 = width - pad
+    nav_w = nav_x1 - nav_x0
 
     durations = [max(c.duration, 0.001) for c in chapters]
     total = sum(durations)
@@ -109,62 +145,51 @@ def render_progress_bar(
     cum = 0.0
     seg_xs: list[tuple[float, float]] = []
     for f in fractions:
-        seg_xs.append((bar_x0 + cum * bar_w, bar_x0 + (cum + f) * bar_w))
+        seg_xs.append((nav_x0 + cum * nav_w, nav_x0 + (cum + f) * nav_w))
         cum += f
 
-    bg = _hex_to_rgba(style.progress_bar_bg_color, 220)
-    fg = _hex_to_rgba(style.progress_bar_color, 255)
-    dim = _hex_to_rgba(style.progress_bar_color, 90)
+    nav_bg = _hex_to_rgba(style.progress_bar_bg_color, 205)
+    active_bg = _hex_to_rgba(style.progress_bar_color, 140)
+    done_bg = _hex_to_rgba(style.progress_bar_color, 180)
 
     draw.rounded_rectangle(
-        (bar_x0, bar_y, bar_x1, bar_y + bar_h),
-        radius=bar_h // 2,
-        fill=bg,
+        (nav_x0, nav_y0, nav_x1, nav_y1),
+        radius=max(10, label_h // 4),
+        fill=nav_bg,
     )
 
+    # 当前章节左侧为已完成；当前章节内按进度填充。
     for i, (x0, x1) in enumerate(seg_xs):
         if i < current_index:
-            color = fg
+            color = done_bg
             fill_to = x1
         elif i == current_index:
-            color = fg
+            color = active_bg
             fill_to = x0 + (x1 - x0) * max(0.0, min(1.0, progress_in_chapter))
         else:
-            color = dim
             fill_to = x0
         if fill_to - x0 > 0.5:
-            draw.rounded_rectangle(
-                (x0, bar_y, fill_to, bar_y + bar_h),
-                radius=bar_h // 2,
-                fill=color,
-            )
+            draw.rectangle((x0, nav_y0, fill_to, nav_y1), fill=color)
         if i < len(seg_xs) - 1:
             sx = int(x1)
-            draw.rectangle((sx - 1, bar_y - 2, sx + 1, bar_y + bar_h + 2), fill=(0, 0, 0, 80))
+            draw.rectangle((sx - 1, nav_y0 + 6, sx + 1, nav_y1 - 6), fill=(255, 255, 255, 110))
 
-    label_y = pad
+    label_y = nav_y0 + (label_h - style.subtitle_font_size) // 2 - 2
     for i, (chap, (x0, x1)) in enumerate(zip(chapters, seg_xs, strict=True)):
         text = chap.title
         if i == current_index:
             text_color = _hex_to_rgba(style.chapter_label_color, 255)
-            box_color = _hex_to_rgba(style.progress_bar_color, 230)
         else:
-            text_color = _hex_to_rgba(style.chapter_label_color, 170)
-            box_color = _hex_to_rgba("#1f2330", 160)
+            text_color = _hex_to_rgba(style.chapter_label_color, 222)
 
         tw, th = _measure(draw, text, label_font)
         seg_w = x1 - x0
-        if tw + 24 > seg_w:
-            avail = max(seg_w - 28, 30)
+        if tw + 18 > seg_w:
+            avail = max(seg_w - 20, 30)
             text = _truncate(text, label_font, draw, int(avail))
             tw, th = _measure(draw, text, label_font)
         cx = (x0 + x1) / 2
-        bx0 = cx - tw / 2 - 12
-        bx1 = cx + tw / 2 + 12
-        by0 = label_y
-        by1 = label_y + th + 12
-        draw.rounded_rectangle((bx0, by0, bx1, by1), radius=10, fill=box_color)
-        draw.text((cx - tw / 2, by0 + 6), text, fill=text_color, font=label_font)
+        draw.text((cx - tw / 2, label_y + (th * 0.05)), text, fill=text_color, font=label_font)
 
     return img
 
@@ -182,11 +207,11 @@ def render_progress_bar_layout(
     img = render_progress_bar(style, chapters, current_index, progress_in_chapter=0.0)
     pad = style.progress_bar_padding
     width = style.width
-    label_h = max(style.subtitle_font_size + 18, 48)
-    bar_y = pad + label_h + 12
+    label_h = max(style.subtitle_font_size + 20, 52)
+    bar_h = max(4, min(10, style.progress_bar_height))
+    bar_y = pad + label_h - bar_h - 6
     bar_x0 = pad
     bar_x1 = width - pad
-    bar_h = style.progress_bar_height
     return img, (bar_x0, bar_y, bar_x1, bar_h)
 
 

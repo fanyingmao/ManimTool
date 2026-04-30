@@ -24,6 +24,7 @@ tts:
 
 render:
   engine: "mermaid"           # 当前仅支持 mermaid，未来可扩展 manim/d2/plantuml
+  # 迭代速度：MoviePy 前可把 width/height/scale 调低，整链（mmdc + 合成）都会轻很多
   mermaid:
     cli: "mmdc"
     theme: "default"
@@ -47,3 +48,18 @@ video:
   motion_zoom_speed: 0.0006
   scene_fade_duration: 0.4
   title_enabled: true
+  moviepy_encode_progress: true   # MoviePy 写 mp4 时在终端显示进度条
+  # 视频编码硬件加速：cpu=libx264；apple=macOS VideoToolbox（GPU）；nvidia=NVENC（需 NVIDIA）
+  encode_device: "apple"
+  # draft=快速代理（1280x720、≤24fps、关场景淡入、进度条少分段）；normal=默认
+  render_profile: "normal"
+  # 顶部标题导航（进度嵌在标题条内部）
+  progress_bar_height: 8
+  progress_bar_padding: 22
+  progress_bar_bg_color: "#1A1C20"
+  progress_bar_color: "#F2F3F5"
+  chapter_label_color: "#FFFFFF"
+  progress_segments_per_second: 2.0   # 进度条每秒分段数，越小越快、条越「跳」
+  encode_preset: "medium"             # libx264 预设；draft 时会自动改 veryfast
+  # null=自动（约 min(16, 核数)，利于 M 系列 / A 系列多核）；也可写死如 12
+  encode_threads: null

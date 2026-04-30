@@ -171,6 +171,32 @@ class VideoConfig(BaseModel):
     motion_zoom_speed: float = 0.0006
     scene_fade_duration: float = 0.4
     title_enabled: bool = True
+    moviepy_encode_progress: bool = Field(
+        default=True,
+        description="MoviePy 导出 mp4 时在终端显示编码进度条（proglog）；设为 false 可静默",
+    )
+    encode_device: Literal["cpu", "apple", "nvidia"] = Field(
+        default="cpu",
+        description="视频编码：cpu=使用 codec（默认 libx264）；apple=macOS VideoToolbox GPU；nvidia=NVIDIA NVENC",
+    )
+    render_profile: Literal["draft", "normal"] = Field(
+        default="normal",
+        description="draft=代理级快速合成（较低分辨率与 fps、简化转场与进度条刷新）；normal=默认质量",
+    )
+    progress_segments_per_second: float = Field(
+        default=2.0,
+        ge=0.25,
+        le=12.0,
+        description="顶部进度条每秒切多少段 ImageClip；越大越顺滑但合成越慢",
+    )
+    encode_preset: str = Field(
+        default="medium",
+        description="libx264 的 -preset；VideoToolbox 等多数情况下会被忽略",
+    )
+    encode_threads: int | None = Field(
+        default=None,
+        description="编码线程数；None 时由合成器按 CPU 核数自动取",
+    )
 
 
 class ProjectConfig(BaseModel):

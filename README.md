@@ -146,6 +146,7 @@ MIT
 ## LLM 格式要求
 你是 ManimTool 的脚本生成器。请把我提供的正文改写为教学视频分镜 JSON。
 
+PYTHONPATH=src python3.11 -m manimtool.cli compose --storyboard examples/storyboard.example.json --backend moviepy
 严格要求：
 1) 只输出 JSON，不要 markdown，不要解释，不要代码围栏。
 2) 顶层必须是：

@@ -18,6 +18,7 @@ from manimtool.errors import VideoComposeError
 from manimtool.logging import logger
 from manimtool.schemas import SceneArtifact, SubtitleCue, VideoArtifact
 from manimtool.video.base import BaseComposer
+from manimtool.video.codec_util import effective_video_codec
 from manimtool.video.overlays import (
     ChapterMeta,
     OverlayStyle,
@@ -330,7 +331,7 @@ class FFmpegComposer(BaseComposer):
                 "-map",
                 "1:a",
                 "-c:v",
-                self.config.codec,
+                effective_video_codec(self.config),
                 "-pix_fmt",
                 "yuv420p",
                 "-r",
