@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>人工智能：从感知到推理的进化之路</title>
+  <meta name="description" content="一篇带配图的人工智能科普文章，可作为 ManimTool 自动化视频的内容源。" />
+  <meta name="author" content="ManimTool" />
+  <style>
+    body { font-family: "Noto Sans CJK SC", "PingFang SC", sans-serif; max-width: 880px; margin: 40px auto; padding: 0 20px; color: #1a1f29; line-height: 1.75; background: #fafbfc; }
+    h1 { color: #4c6ef5; border-bottom: 3px solid #4c6ef5; padding-bottom: 10px; }
+    h2 { color: #364fc7; margin-top: 48px; }
+    .summary { background: #eef2ff; border-left: 4px solid #4c6ef5; padding: 14px 18px; border-radius: 6px; }
+    .narration { font-size: 17px; }
+    figure { margin: 24px 0; padding: 18px; background: #fff; border: 1px solid #e3e8ef; border-radius: 12px; box-shadow: 0 4px 14px rgba(20, 30, 60, .04); }
+    figcaption { color: #6b7280; font-size: 13px; margin-top: 8px; text-align: center; }
+    pre.mermaid { background: #f6f8fa; border-radius: 8px; padding: 16px; overflow-x: auto; font-family: "JetBrains Mono", monospace; font-size: 13px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>人工智能：从感知到推理的进化之路</h1>
+  <p class="summary" data-role="summary">
+    本文用六个章节，从 AI 的总体框架、机器学习、深度学习、Transformer 大模型、
+    多模态智能体到未来挑战，配合可视化图示讲清"AI 究竟是什么、它怎么工作、又会走向何方"。
+  </p>
+</header>
+
+<section data-scene-id="overview" data-duration-hint="14">
+  <h2>一、什么是人工智能</h2>
+  <p class="narration" data-role="narration">
+    人工智能是让机器具备感知、学习、推理与决策能力的综合学科，
+    它涵盖了从规则系统到深度学习的多种技术路径。
+    今天，我们把它拆成三层：感知层负责看与听，认知层负责理解与推理，行动层负责执行与反馈。
+  </p>
+  <figure>
+    <pre class="mermaid" data-role="diagram">
+flowchart TB
+  A([感知层<br/>视觉 / 语音 / 传感器]):::p --> B([认知层<br/>语言理解 / 推理 / 规划]):::c
+  B --> D([行动层<br/>对话 / 控制 / 生成]):::a
+  D -. 反馈 .-> A
+  classDef p fill:#dbeafe,stroke:#2563eb,color:#1e3a8a;
+  classDef c fill:#fef3c7,stroke:#d97706,color:#78350f;
+  classDef a fill:#dcfce7,stroke:#15803d,color:#14532d;
+    </pre>
+    <figcaption>图 1：AI 的三层能力栈</figcaption>
+  </figure>
+</section>
+
+<section data-scene-id="machine_learning" data-duration-hint="16">
+  <h2>二、机器学习的基本范式</h2>
+  <p class="narration" data-role="narration">
+    机器学习用数据替代了手写规则。给定一组样本，模型在训练过程中调整参数，
+    使预测结果与真实标签尽可能接近。它有三种主要范式：监督学习、无监督学习、强化学习。
+  </p>
+  <figure>
+    <pre class="mermaid" data-role="diagram">
+flowchart LR
+  D[原始数据] --> F[特征工程 / 嵌入]
+  F --> M{模型}
+  M -->|监督学习| S[分类 / 回归]
+  M -->|无监督学习| U[聚类 / 降维]
+  M -->|强化学习| R[策略 / 价值]
+  S & U & R --> E[评估与迭代]
+    </pre>
+    <figcaption>图 2：机器学习三种范式</figcaption>
+  </figure>
+</section>
+
+<section data-scene-id="deep_learning" data-duration-hint="18">
+  <h2>三、深度学习的崛起</h2>
+  <p class="narration" data-role="narration">
+    深度学习用层层堆叠的神经网络自动学习特征。
+    卷积网络擅长图像，循环网络处理序列，
+    而它们都遵循一个共同的训练循环：前向计算、损失反馈、梯度更新，再反复迭代。
+  </p>
+  <figure>
+    <pre class="mermaid" data-role="diagram">
+flowchart LR
+  X[输入] --> H1[隐藏层 1]
+  H1 --> H2[隐藏层 2]
+  H2 --> H3[隐藏层 3]
+  H3 --> Y[输出]
+  Y --> L[损失函数]
+  L -. 反向传播 .-> H3
+  L -. 反向传播 .-> H2
+  L -. 反向传播 .-> H1
+    </pre>
+    <figcaption>图 3：神经网络的前向与反向传播</figcaption>
+  </figure>
+</section>
+
+<section data-scene-id="transformer" data-duration-hint="20">
+  <h2>四、Transformer 与大语言模型</h2>
+  <p class="narration" data-role="narration">
+    Transformer 用自注意力机制让模型一次看完整段文本，捕捉长距离依赖。
+    它是当前所有大型语言模型的基石。
+    一句话进入模型，被切成 token，在多层注意力层中相互交流，最终生成下一段文字。
+  </p>
+  <figure>
+    <pre class="mermaid" data-role="diagram">
+flowchart TB
+  T[Tokens] --> E[Embedding]
+  E --> SA[Self-Attention]
+  SA --> FF[Feed Forward]
+  FF --> N{N 层堆叠}
+  N --> O[Logits → 下一个 Token]
+    </pre>
+    <figcaption>图 4：Transformer 主干结构</figcaption>
+  </figure>
+</section>
+
+<section data-scene-id="agent" data-duration-hint="18">
+  <h2>五、多模态与智能体</h2>
+  <p class="narration" data-role="narration">
+    智能体把大模型变成一个会用工具的执行者。
+    它接收任务，分解为步骤，调用工具或检索知识，
+    再根据结果继续规划，直到目标达成。文字、图像、语音都成为它的输入与输出。
+  </p>
+  <figure>
+    <pre class="mermaid" data-role="diagram">
+sequenceDiagram
+  participant U as 用户
+  participant A as 智能体
+  participant T as 工具 / 检索
+  U->>A: 提出任务
+  A->>A: 拆解 / 规划
+  A->>T: 调用工具
+  T-->>A: 返回结果
+  A->>A: 反思与迭代
+  A-->>U: 输出最终答案
+    </pre>
+    <figcaption>图 5：智能体的工作循环</figcaption>
+  </figure>
+</section>
+
+<section data-scene-id="future" data-duration-hint="16">
+  <h2>六、未来的挑战与方向</h2>
+  <p class="narration" data-role="narration">
+    更强的 AI 也带来更难的问题：算力与能耗、可解释性、对齐与安全、社会影响。
+    我们需要在能力、成本、可信任三个维度找到平衡，
+    让人工智能成为可持续的、值得信赖的协作伙伴。
+  </p>
+  <figure>
+    <pre class="mermaid" data-role="diagram">
+flowchart LR
+  C[能力] --- B((平衡))
+  Co[成本] --- B
+  Tr[可信任] --- B
+  B --> G[可持续的 AI]
+    </pre>
+    <figcaption>图 6：AI 的可持续三角</figcaption>
+  </figure>
+</section>
+
+</body>
+</html>

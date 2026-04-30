@@ -21,6 +21,9 @@ dependencies = [
     # 视频/音频
     "moviepy>=1.0.3",
     "imageio-ffmpeg>=0.4.9",
+    "Pillow>=10.0.0",
+    "numpy>=1.24.0",
+    "mutagen>=1.47.0",
     # 配置/数据校验
     "pydantic>=2.6.0",
     "pydantic-settings>=2.2.0",
